@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JSON Viewer</title>
+    <style>
+        .json-key { font-weight: bold; }
+        .json-block { margin-left: 20px; }
+        #progressBar { width: 100%; height: 20px; position: relative; }
+        #progress { height: 100%; background-color: lightblue; }
+    </style>
+</head>
+<body>
+    <input type="file" id="fileInput">
+    <div id="progressBar">
+        <div id="progress"></div>
+    </div>
+    <div id="jsonContainer"></div>
+    <script>
+        document.getElementById('fileInput').addEventListener('change', function (e) {
+            const file = e.target.files[0];
+            if (!file) {
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = function (e) {
+    document.getElementById('jsonContainer').innerHTML = '';
+    const content = e.target.result;
+    
+    // Start measuring time
+    const parseStartTime = performance.now();
+    
+    const jsonData = JSON.parse(content);
+    
+    // End measuring time
+    const parseEndTime = performance.now();
+    
+    // Calculate and log the time difference
+    const parseTime = parseEndTime - parseStartTime;
+    console.log(`JSON parsed in ${parseTime.toFixed(2)} ms`);
+    
+    const totalKeys = countKeys(jsonData);
+    const workerBlob = new Blob([document.querySelector('#worker-script').textContent], { type: 'text/javascript' });
+    const workerUrl = URL.createObjectURL(workerBlob);
+    const worker = new Worker(workerUrl);
+    worker.postMessage({ jsonData, totalKeys });
+    worker.onmessage = function(event) {
+        const { key, value, renderedKeys, totalKeys } = event.data;
+        renderData(key, value, renderedKeys, totalKeys, document.getElementById('jsonContainer'));
+    };
+};
+            reader.readAsText(file);
+        });
+
+        function renderData(key, value, renderedKeys, totalKeys, container, depth = 0) {
+            const div = document.createElement('div');
+            div.classList.add('json-block');
+            div.style.paddingLeft = '20px';
+
+            const keyElement = document.createElement('span');
+            keyElement.classList.add('json-key');
+            keyElement.textContent = key + ': ';
+            div.appendChild(keyElement);
+
+            if (typeof value === 'object' && value !== null) {
+                const childContainer = document.createElement('div');
+                div.appendChild(childContainer);
+            } else {
+                const textNode = document.createTextNode('' + value);
+                div.appendChild(textNode);
+            }
+
+            container.appendChild(div);
+
+            const progressPercent = (renderedKeys / totalKeys * 100).toFixed(2);
+            updateProgressBar(progressPercent);
+            console.log(`Rendered key ${renderedKeys} of ${totalKeys} - ${progressPercent}%`);
+        }
+
+        function updateProgressBar(percentage) {
+            document.getElementById('progress').style.width = percentage + '%';
+        }
+
+        function countKeys(obj) {
+            let keyCount = 0;
+            for (let key in obj) {
+                keyCount++;
+                if (typeof obj[key] === 'object' && obj[key] !== null) {
+                    keyCount += countKeys(obj[key]);
+                }
+            }
+            return keyCount;
+        }
+    </script>
+    <script id="worker-script" type="javascript/worker">
+        self.onmessage = function(e) {
+            const { jsonData, totalKeys } = e.data;
+            loadAllNodes(jsonData, totalKeys);
+        };
+
+        function loadAllNodes(json, totalKeys, renderedKeys = 0) {
+            const keys = Object.keys(json);
+            let keyIndex = 0;
+            const batchLoadSize = 10;
+            const loadBatch = () => {
+                let batchEnd = keyIndex + batchLoadSize;
+                if (batchEnd > keys.length) {
+                    batchEnd = keys.length;
+                }
+                while (keyIndex < batchEnd) {
+                    const key = keys[keyIndex];
+                    const value = json[key];
+                    const dataToRender = { key, value, renderedKeys, totalKeys };
+                    postMessage(dataToRender);
+                    if (typeof value === 'object' && value !== null) {
+                        renderedKeys += countKeys(value);
+                        loadAllNodes(value, totalKeys, renderedKeys);
+                    }
+                    renderedKeys++;
+                    keyIndex++;
+                }
+                if (keyIndex < keys.length) {
+                    setTimeout(loadBatch, 0);
+                }
+            };
+            loadBatch();
+        }
+
+        function countKeys(obj) {
+            let keyCount = 0;
+            for (let key in obj) {
+                keyCount++;
+                if (typeof obj[key] === 'object' && obj[key] !== null) {
+                    keyCount += countKeys(obj[key]);
+                }
+            }
+            return keyCount;
+        }
+    </script>
+</body>
+</html>
